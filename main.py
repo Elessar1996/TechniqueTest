@@ -35,10 +35,6 @@ df.columns = ['price', 'bid', 'ask', 'volume', 'date']
 df_values = df.values[:374]
 
 
-
-
-
-
 # print(len(df_values))
 #
 for idx, item in enumerate(df_values):

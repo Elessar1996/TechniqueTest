@@ -1,5 +1,7 @@
-
 import numpy as np
+import MetaTrader5 as mt5
+import time
+
 
 class SimpleVWAP:
 
@@ -56,6 +58,182 @@ class SimpleVWAP:
         self.rv = rv
         self.crv = float('-inf')
         self.crv_list = [-1 for _ in range(10)]
+
+        self.initial_vwap_calculation()
+
+    def initial_vwap_calculation(self):
+
+        if len(self.price_list) != 0:
+            sum_v = 0
+            sum_pv = 0
+            for p, v in zip(self.price_list, self.volume_list):
+
+                sum_pv += p*v
+                sum_v += v
+
+                self.abs_vwap.append(sum_pv/sum_v)
+            self.initial_window_vwap()
+
+    def initial_window_vwap(self):
+
+        for idx, item in enumerate(self.price_list):
+
+            if idx + 1 < self.window_size:
+                self.window_vwap.append(self.price_list[idx])
+            else:
+                sum_vol = np.sum(self.volume_list[idx - self.window_size: idx])
+                sum_vxp = np.sum([i * j for i, j in zip(self.volume_list[idx - self.window_size:idx],
+                                                        self.price_list[idx - self.window_size:idx])])
+
+                self.window_vwap.append(sum_vxp / sum_vol)
+
+    def calculate_unit(self, price):
+        unit = self.leverage * self.initial_imm / price
+        print(f'unit is {unit}')
+        return self.leverage * self.initial_imm / price
+
+    def create_long_request(self):
+        symbol_info_tick = mt5.symbol_info_tick(self.symbol)
+        point = mt5.symbol_info(self.symbol).point
+        deviation = 20
+        bid_price = symbol_info_tick.bid
+        unit = self.calculate_unit(bid_price)
+        print(f'unit = {unit}')
+
+        volume = np.ceil(unit * self.lot_size)
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": self.symbol,
+            "volume": volume,
+            "type": mt5.ORDER_TYPE_BUY,
+            "price": bid_price,
+            "sl": bid_price - 100 * point,
+            "tp": bid_price + 100 * point,
+            "deviation": deviation,
+            "magic": 234000,
+            "comment": "python script open",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        return request
+
+    def create_short_request(self):
+        symbol_info_tick = mt5.symbol_info_tick(self.symbol)
+        # point = mt5.symbol_info(self.symbol).point
+        deviation = 20
+        ask_price = symbol_info_tick.ask
+        unit = self.calculate_unit(ask_price)
+        print(f'unit = {unit}')
+        volume = np.ceil(unit * self.lot_size)
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": self.symbol,
+            "volume": volume,
+            "type": mt5.ORDER_TYPE_SELL,
+            "price": ask_price,
+            # "sl": ask_price - 100 * point,
+            # "tp": ask_price + 100 * point,
+            "deviation": deviation,
+            "magic": 234000,
+            "comment": "python script open",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        return request
+
+    def close_position(self):
+
+        print('closing position')
+
+        all_positions = mt5.positions_get()
+        position = all_positions[0]
+        deviation = 20
+        tick = mt5.symbol_info_tick(position.symbol)
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": position.ticket,
+            "symbol": position.symbol,
+            "volume": position.volume,
+            "type": mt5.ORDER_TYPE_BUY if position.type == 1 else mt5.ORDER_TYPE_SELL,
+            "price": tick.ask if position.type == 1 else tick.bid,
+            "deviation": deviation,
+            "magic": 234000,
+            "comment": "close open positions",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK
+        }
+
+        result = mt5.order_send(request)
+
+        time.sleep(2)
+
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print("2. order_send failed, retcode={}".format(result.retcode))
+            # request the result as a dictionary and display it element by element
+            result_dict = result._asdict()
+            for field in result_dict.keys():
+                print("   {}={}".format(field, result_dict[field]))
+                # if this is a trading request structure, display it element by element as well
+                if field == "request":
+                    traderequest_dict = result_dict[field]._asdict()
+                    for tradereq_filed in traderequest_dict:
+                        print("       traderequest: {}={}".format(tradereq_filed, traderequest_dict[tradereq_filed]))
+        print("2. order_send done, ", result)
+
+    def go_short_real(self):
+
+        print('going short')
+        request = self.create_short_request()
+        result = mt5.order_send(request)
+        print(f'result: {result}')
+        time.sleep(2)
+
+        print(
+            "1. order_send(): by {} {} lots at {} .format(self.symbol, self.lot_size"
+        )
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print("2. order_send failed, retcode={}".format(result.retcode))
+            # request the result as a dictionary and display it element by element
+            result_dict = result._asdict()
+            for field in result_dict.keys():
+                print("   {}={}".format(field, result_dict[field]))
+                # if this is a trading request structure, display it element by element as well
+                if field == "request":
+                    traderequest_dict = result_dict[field]._asdict()
+                    for tradereq_filed in traderequest_dict:
+                        print("       traderequest: {}={}".format(tradereq_filed, traderequest_dict[tradereq_filed]))
+        print("2. order_send done, ", result)
+        print("   opened position with POSITION_TICKET={}".format(result.order))
+
+    def go_long_real(self):
+
+        print('going long')
+        request = self.create_long_request()
+        result = mt5.order_send(request)
+
+        print(f'result: {result}')
+        time.sleep(2)
+        print(
+            "1. order_send(): by {} {} lots ".format(self.symbol, self.lot_size,
+                                                     ))
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print("2. order_send failed, retcode={}".format(result.retcode))
+            # request the result as a dictionary and display it element by element
+            result_dict = result._asdict()
+            for field in result_dict.keys():
+                print("   {}={}".format(field, result_dict[field]))
+                # if this is a trading request structure, display it element by element as well
+                if field == "request":
+                    traderequest_dict = result_dict[field]._asdict()
+                    for tradereq_filed in traderequest_dict:
+                        print("       traderequest: {}={}".format(tradereq_filed, traderequest_dict[tradereq_filed]))
+        print("2. order_send done, ", result)
+        print("   opened position with POSITION_TICKET={}".format(result.order))
+
 
     def update_data(self, price, ask, bid, volume):
 
@@ -133,6 +311,8 @@ class SimpleVWAP:
         self.go_long_indexes.append(idx)
         self.action = 'go_long'
 
+        self.go_long_real()
+
         return self.action
 
     def close_long(self, idx):
@@ -145,6 +325,7 @@ class SimpleVWAP:
         self.profit_track.append(self.calculate_profit(idx))
         self.close_long_indexes.append(idx)
         self.action = 'close_long'
+        self.close_position()
         self.reset_memory(idx)
         return self.action
 
@@ -160,6 +341,7 @@ class SimpleVWAP:
         self.profit_track.append(self.calculate_profit(idx))
 
         self.action = "go_short"
+        self.go_short_real()
         return self.action
 
     def close_short(self, idx):
@@ -173,6 +355,7 @@ class SimpleVWAP:
         self.profit_track.append(self.calculate_profit(idx))
         self.close_short_indexes.append(idx)
         self.action = "close_short"
+        self.close_position()
         self.reset_memory(idx)
         return self.action
 
@@ -182,8 +365,7 @@ class SimpleVWAP:
             self.close_short(idx)
         elif self.have_bought:
             self.close_long(idx)
-
-        # self.stop_index.append(idx)
+        print(f'we are closing position!!')
 
     def check_profit(self, idx):
         print('we are in check profit')
@@ -214,12 +396,110 @@ class SimpleVWAP:
             self.crv = self.volume_list[idx]/self.partial_average
             print(f'idx = {idx} --> rv={self.crv} partial_ave={self.partial_average} v={self.volume_list[idx]}')
             self.crv_list.append(self.crv)
+
     def check_for_volume(self):
 
         if self.crv >= self.rv:
             return True
         else:
             return False
+
+    def calculate_unit(self, price):
+        unit = self.leverage * self.initial_imm / price
+        print(f'unit is {unit}')
+        return self.leverage * self.initial_imm / price
+
+    def create_long_request(self):
+        symbol_info_tick = mt5.symbol_info_tick(self.symbol)
+        point = mt5.symbol_info(self.symbol).point
+        deviation = 20
+        bid_price = symbol_info_tick.bid
+        unit = self.calculate_unit(bid_price)
+        print(f'unit = {unit}')
+
+        volume = np.ceil(unit * self.lot_size)
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": self.symbol,
+            "volume": volume,
+            "type": mt5.ORDER_TYPE_BUY,
+            "price": bid_price,
+            "sl": bid_price - 100 * point,
+            "tp": bid_price + 100 * point,
+            "deviation": deviation,
+            "magic": 234000,
+            "comment": "python script open",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        return request
+
+    def create_short_request(self):
+        symbol_info_tick = mt5.symbol_info_tick(self.symbol)
+        # point = mt5.symbol_info(self.symbol).point
+        deviation = 20
+        ask_price = symbol_info_tick.ask
+        unit = self.calculate_unit(ask_price)
+        print(f'unit = {unit}')
+        volume = np.ceil(unit * self.lot_size)
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": self.symbol,
+            "volume": volume,
+            "type": mt5.ORDER_TYPE_SELL,
+            "price": ask_price,
+            # "sl": ask_price - 100 * point,
+            # "tp": ask_price + 100 * point,
+            "deviation": deviation,
+            "magic": 234000,
+            "comment": "python script open",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        return request
+
+    def close_position(self):
+
+        print('closing position')
+
+        all_positions = mt5.positions_get()
+        position = all_positions[0]
+        deviation = 20
+        tick = mt5.symbol_info_tick(position.symbol)
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": position.ticket,
+            "symbol": position.symbol,
+            "volume": position.volume,
+            "type": mt5.ORDER_TYPE_BUY if position.type == 1 else mt5.ORDER_TYPE_SELL,
+            "price": tick.ask if position.type == 1 else tick.bid,
+            "deviation": deviation,
+            "magic": 234000,
+            "comment": "close open positions",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK
+        }
+
+        result = mt5.order_send(request)
+
+        time.sleep(2)
+
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            print("2. order_send failed, retcode={}".format(result.retcode))
+            # request the result as a dictionary and display it element by element
+            result_dict = result._asdict()
+            for field in result_dict.keys():
+                print("   {}={}".format(field, result_dict[field]))
+                # if this is a trading request structure, display it element by element as well
+                if field == "request":
+                    traderequest_dict = result_dict[field]._asdict()
+                    for tradereq_filed in traderequest_dict:
+                        print("       traderequest: {}={}".format(tradereq_filed, traderequest_dict[tradereq_filed]))
+        print("2. order_send done, ", result)
 
 
 
